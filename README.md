@@ -1,5 +1,5 @@
 # Object-detection-and-Speech
-Object detection using tensorflow SSD_Mobilenet CNN and speech
+Object detection using tensorflow SSD_Mobilenet CNN and speech output using gtss and pygame
 ## Summary
 This repository is a application of tensorflow object detection api to detect objects in webcam feed and 
 it gives audible output for the detected object's class name. For audio output is uses google text to speech 

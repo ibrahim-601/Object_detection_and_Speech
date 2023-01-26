@@ -1,123 +1,115 @@
-import numpy as np
 import os
-
 import sys
-import tarfile
+from time import strftime
+
+import numpy as np
 import tensorflow as tf
-import zipfile
 
-from collections import defaultdict
-from io import StringIO
-
-from PIL import Image
 import cv2
 from gtts import gTTS
 import pygame
 
-import time
-from time import strftime
-
-if tf.__version__ < '1.10.0':
-    raise ImportError('Please upgrade your tensorflow installation to v1.10.* or later!')
+if tf.__version__ < '2':
+    raise ImportError('Please upgrade your tensorflow installation to v2.2.0 or later!')
+if tf.__version__ > '2.10.0':
+    raise ImportError('Please downgrade your tensorflow installation to v2.10.0 or earlier!')
 
 sys.path.append("..")
 
-
-from utils import label_map_util
-
-from utils import visualization_utils as vis_util
-
-
-# What model to use
-MODEL_NAME = 'ssdlite_mobilenet_v2_coco_2018_05_09'
-MODEL_FILE = MODEL_NAME + '.tar.gz'
-
-# Path to frozen detection graph. This is the actual model that is used for the object detection.
-PATH_TO_CKPT = MODEL_NAME + '/frozen_inference_graph.pb'
+from object_detection.utils import label_map_util
+from object_detection.utils import visualization_utils as vis_util
 
 # List of the strings that is used to add correct label for each box.
 PATH_TO_LABELS = os.path.join('data', 'mscoco_label_map.pbtxt')
-
 NUM_CLASSES = 90
 
-
-#Load a frozen graph
-
-detection_graph = tf.Graph()
-with detection_graph.as_default():
-	od_graph_def = tf.GraphDef()
-	with tf.gfile.GFile(PATH_TO_CKPT, 'rb') as fid:
-		serialized_graph = fid.read()
-		od_graph_def.ParseFromString(serialized_graph)
-		tf.import_graph_def(od_graph_def, name='')
-	sess = tf.Session(graph=detection_graph)
-
-#Loading label map
-
+# Loading label map
 label_map = label_map_util.load_labelmap(PATH_TO_LABELS)
 categories = label_map_util.convert_label_map_to_categories(label_map, max_num_classes=NUM_CLASSES, use_display_name=True)
 category_index = label_map_util.create_category_index(categories)
 
+# Path to model
+model_path = 'Object-detection-and-Speech/ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model/'
+# Load a model from model path
+model = tf.saved_model.load(model_path)
 
-# Define input and output tensors (i.e. data) for the object detection classifier
+# Define prediction function for model using model signature
+model_prediction = model.signatures['serving_default']
 
-# Input tensor is the image
-image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
+# Define codec for video output file and frame height, width, fps
+fourcc_codec = cv2.VideoWriter_fourcc(*'mp4v')
+frame_height = 1280
+frame_width = 720
+frame_rate = 5
 
-# Output tensors are the detection boxes, scores, and classes
-# Each box represents a part of the image where a particular object was detected
-detection_boxes = detection_graph.get_tensor_by_name('detection_boxes:0')
+# Initialize webcam feed and set resolution and codec
+video = cv2.VideoCapture(0)
+video.set(cv2.CAP_PROP_FRAME_WIDTH,frame_height)
+video.set(cv2.CAP_PROP_FRAME_HEIGHT,frame_width)
+video.set(cv2.CAP_PROP_FOURCC, fourcc_codec)
 
-# Each score represents level of confidence for each of the objects.
-# The score is shown on the result image, together with the class label.
-detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
-detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
+# Create a video writter to save vide stream
+video_stream_save_path = 'Object-detection-and-Speech/video_records'
+# Make sure the video save path exists
+os.makedirs(video_stream_save_path, exist_ok=True)
+# Set video file name according to current time
+video_file_name = 'vid_' + strftime("%Y%m%d_%H%M%S") + '.mp4'
+video_stream_save_path = os.path.join(video_stream_save_path, video_file_name)
+# Initialize video writter with codec and resolution
+out = cv2.VideoWriter(video_stream_save_path, fourcc_codec, frame_rate, (frame_height,frame_width))
 
-# Number of objects detected
-num_detections = detection_graph.get_tensor_by_name('num_detections:0')
-
-# Initialize webcam feed
-video = cv2.VideoCapture(2)
-fourcc = cv2.VideoWriter_fourcc(*'XVID')
-video_file = 'vid_' + strftime("%Y%m%d_%H%M%S") + '.avi'
-out = cv2.VideoWriter(os.path.join('video_records', video_file),fourcc, 5, (1920,1080))
-ret = video.set(3,1920)
-ret = video.set(4,1080)
-
+# Initialize variables required for frame processing
 lists = []
 lists.clear()
-pygame.init()
 frame_count=0;
 
+# Initialize pygame
+pygame.init()
+
+# loop for detecting object on each frame from webcam
 while(True):
 
-	# Acquire frame and expand frame dimensions to have shape: [1, None, None, 3]
-	# i.e. a single-column array, where each item in the column has the pixel RGB value
+	# Acquire frame convert to numpy array
 	ret, frame = video.read()
 	frame_count+=1
-	frame_expanded = np.expand_dims(frame, axis=0)
+	input_frame = np.asarray(frame)
+	
+	# Convert numpy array to tensor
+	input_frame = tf.convert_to_tensor(input_frame)
+	# The model expects a batch of images, so add an axis with `tf.newaxis`.
+	input_frame = input_frame[tf.newaxis,...]
 
 	# Perform the actual detection by running the model with the image as input
-	(boxes, scores, classes, num) = sess.run(
-		[detection_boxes, detection_scores, detection_classes, num_detections],
-		feed_dict={image_tensor: frame_expanded})
+	model_output = model_prediction(input_frame)
+	
+	# extract detection info from model output
+	# take only item at 0 index as we sent single image as batch
+	num_detections = int(model_output.pop('num_detections'))
+	model_output = {key:value[0, :num_detections].numpy() 
+                 for key,value in model_output.items()}
+	model_output['num_detections'] = num_detections
+	
+	# detection_classes should be ints.
+	model_output['detection_classes'] = model_output['detection_classes'].astype(np.int64)
 
 	# Draw the results of the detection (aka 'visulaize the results')
 	f,names = vis_util.visualize_boxes_and_labels_on_image_array(
 		frame,
-		np.squeeze(boxes),
-		np.squeeze(classes).astype(np.int32),
-		np.squeeze(scores),
+		model_output['detection_boxes'],
+		model_output['detection_classes'],
+		model_output['detection_scores'],
 		category_index,
 		use_normalized_coordinates=True,
 		line_thickness=8,
 		min_score_thresh=0.60)
 
+	# Write frame to video file
 	out.write(frame);
-	# All the results have been drawn on the frame, so it's time to display it.
-	cv2.imshow('live_detection', f)
-	
 
+	# All the results have been drawn on the framerame, so it's time to display it.
+	cv2.imshow('live_detection', frame)
+	
+	# Provide sound output after 5 frames
 	if (frame_count % 5 == 0):
 		for i in names:
 			
@@ -135,21 +127,24 @@ while(True):
 					name = human_string_filename + ".mp3"
 					
 				# Only get from google if we dont have it
-				if not os.path.isfile(os.path.join('sounds', name)):
+				if not os.path.isfile(os.path.join('Object-detection-and-Speech/sounds', name)):
 					tts = gTTS(text=human_string, lang='en')
-					tts.save(os.path.join('sounds', name))
+					tts.save(os.path.join('Object-detection-and-Speech/sounds', name))
 
-				pygame.mixer.music.load(os.path.join('sounds', name))
+				# Use pygame mixer to play the sound file
+				pygame.mixer.music.load(os.path.join('Object-detection-and-Speech/sounds', name))
 				pygame.mixer.music.play()
-				
+		
+		# Clear detected object list after 30 frames
 		if (frame_count % 30 == 0):
 			lists.clear()
 
+	# Add functionalities to quit the program by pressing 'q' on keyboard
 	if cv2.waitKey(25) & 0xFF==ord('q'):
 		break
             
 #clean everything
 cv2.destroyAllWindows()
 video.release()
-sess.close()
-
+out.release()
+exit()

@@ -29,7 +29,7 @@ categories = label_map_util.convert_label_map_to_categories(label_map, max_num_c
 category_index = label_map_util.create_category_index(categories)
 
 # Path to model
-model_path = 'Object-detection-and-Speech/ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model/'
+model_path = 'Object_detection_and_Speech/ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model/'
 # Load a model from model path
 model = tf.saved_model.load(model_path)
 

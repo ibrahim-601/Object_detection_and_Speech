@@ -38,14 +38,14 @@ model_prediction = model.signatures['serving_default']
 
 # Define codec for video output file and frame height, width, fps
 fourcc_codec = cv2.VideoWriter_fourcc(*'mp4v')
-frame_height = 1280
-frame_width = 720
+frame_width = 1280
+frame_height = 720
 frame_rate = 5
 
 # Initialize webcam feed and set resolution and codec
 video = cv2.VideoCapture(0)
-video.set(cv2.CAP_PROP_FRAME_WIDTH,frame_height)
-video.set(cv2.CAP_PROP_FRAME_HEIGHT,frame_width)
+video.set(cv2.CAP_PROP_FRAME_WIDTH,frame_width)
+video.set(cv2.CAP_PROP_FRAME_HEIGHT,frame_height)
 video.set(cv2.CAP_PROP_FOURCC, fourcc_codec)
 
 # Create a video writter to save vide stream
